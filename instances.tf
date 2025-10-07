@@ -1,0 +1,123 @@
+# Use your local SSH public key so cloud-init injects it
+resource "openstack_compute_keypair_v2" "me" {
+  name       = "indyssc-key"
+  public_key = file("~/.ssh/id_ed25519.pub")
+}
+
+# ---------- Helper locals for fixed IPs ----------
+locals {
+  # worker indexes 1..var.worker_count
+  workers = [for i in range(var.worker_count) : i + 1]
+  # IP helpers for mgmt/mpi
+  ip = {
+    master = { mgmt = "192.168.10.101", mpi = "192.168.20.101" }
+    worker = { mgmt_base = "192.168.10.10", mpi_base = "192.168.20.10" } # we'll add index later (.2 + idx*?)
+  }
+}
+
+# Master ports (fixed mgmt/mpi, DHCP on access)
+resource "openstack_networking_port_v2" "master_mgmt" {
+  name           = "master-mgmt"
+  network_id     = openstack_networking_network_v2.mgmt.id
+  security_group_ids = [openstack_networking_secgroup_v2.cluster_sg.id]
+  fixed_ip {
+    subnet_id  = openstack_networking_subnet_v2.mgmt.id
+    ip_address = "192.168.10.101"
+  }
+}
+
+resource "openstack_networking_port_v2" "master_mpi" {
+  name           = "master-mpi"
+  network_id     = openstack_networking_network_v2.mpi.id
+  security_group_ids = [openstack_networking_secgroup_v2.cluster_sg.id]
+  fixed_ip {
+    subnet_id  = openstack_networking_subnet_v2.mpi.id
+    ip_address = "192.168.20.101"
+  }
+}
+
+resource "openstack_networking_port_v2" "master_access" {
+  name           = "master-access"
+  network_id     = openstack_networking_network_v2.access.id
+  security_group_ids = [openstack_networking_secgroup_v2.cluster_sg.id]
+  admin_state_up = true
+}
+
+# Worker ports (fixed mgmt/mpi, DHCP on access)
+resource "openstack_networking_port_v2" "worker_mgmt" {
+  for_each       = { for i in local.workers : i => i }
+  name           = "worker${each.key}-mgmt"
+  network_id     = openstack_networking_network_v2.mgmt.id
+  security_group_ids = [openstack_networking_secgroup_v2.cluster_sg.id]
+  fixed_ip {
+    subnet_id  = openstack_networking_subnet_v2.mgmt.id
+    ip_address = format("192.168.10.1%02d", each.key+1)  # .102-.105 for 4 workers
+  }
+}
+
+resource "openstack_networking_port_v2" "worker_mpi" {
+  for_each       = { for i in local.workers : i => i }
+  name           = "worker${each.key}-mpi"
+  network_id     = openstack_networking_network_v2.mpi.id
+  security_group_ids = [openstack_networking_secgroup_v2.cluster_sg.id]
+  fixed_ip {
+    subnet_id  = openstack_networking_subnet_v2.mpi.id
+    ip_address = format("192.168.20.1%02d", each.key+1)  # .102-.105
+  }
+}
+
+resource "openstack_networking_port_v2" "worker_access" {
+  for_each       = { for i in local.workers : i => i }
+  name           = "worker${each.key}-access"
+  network_id     = openstack_networking_network_v2.access.id
+  security_group_ids = [openstack_networking_secgroup_v2.cluster_sg.id]
+  admin_state_up = true
+}
+
+# ---------- Instances ----------
+resource "openstack_compute_instance_v2" "master" {
+  name        = "master"
+  image_id    = var.image_id
+  flavor_name = var.master_flavor
+  key_pair    = openstack_compute_keypair_v2.me.name
+
+  network { port = openstack_networking_port_v2.master_access.id } # NIC1
+  network { port = openstack_networking_port_v2.master_mgmt.id }   # NIC2
+  network { port = openstack_networking_port_v2.master_mpi.id }    # NIC3
+}
+
+resource "openstack_compute_instance_v2" "worker" {
+  for_each    = { for i in local.workers : i => i }
+  name        = "worker${each.key}"
+  image_id    = var.image_id
+  flavor_name = var.worker_flavor
+  key_pair    = openstack_compute_keypair_v2.me.name
+
+  network { port = openstack_networking_port_v2.worker_access[each.key].id }
+  network { port = openstack_networking_port_v2.worker_mgmt[each.key].id }
+  network { port = openstack_networking_port_v2.worker_mpi[each.key].id }
+}
+
+# ---------- Floating IPs ----------
+resource "openstack_networking_floatingip_v2" "fip_master" {
+  pool = data.openstack_networking_network_v2.external.name
+}
+
+resource "openstack_networking_floatingip_associate_v2" "fip_assoc_master" {
+  floating_ip = openstack_networking_floatingip_v2.fip_master.address
+  port_id     = openstack_networking_port_v2.master_access.id
+  depends_on  = [openstack_compute_instance_v2.master]
+}
+
+# Optional FIPs for workers (off by default)
+resource "openstack_networking_floatingip_v2" "fip_worker" {
+  for_each = var.assign_fips_to_workers ? { for i in local.workers : i => i } : {}
+  pool     = data.openstack_networking_network_v2.external.name
+}
+
+resource "openstack_networking_floatingip_associate_v2" "fip_assoc_worker" {
+  for_each    = var.assign_fips_to_workers ? { for i in local.workers : i => i } : {}
+  floating_ip = openstack_networking_floatingip_v2.fip_worker[each.key].address
+  port_id     = openstack_networking_port_v2.worker_access[each.key].id
+  depends_on  = [openstack_compute_instance_v2.worker]
+}
