@@ -29,20 +29,20 @@ resource "openstack_networking_router_interface_v2" "rtr_access" {
 resource "openstack_networking_network_v2" "mgmt" { name = "mgmt-net" }
 
 resource "openstack_networking_subnet_v2" "mgmt" {
-  name        = "mgmt-subnet"
-  network_id  = openstack_networking_network_v2.mgmt.id
-  cidr        = "192.168.10.0/24"
-  ip_version  = 4
+  name       = "mgmt-subnet"
+  network_id = openstack_networking_network_v2.mgmt.id
+  cidr       = "192.168.10.0/24"
+  ip_version = 4
   enable_dhcp = true
   # Avoid DHCP handing out .101-.105 by skipping them in pools
   allocation_pool {
-    start = "192.168.10.50"
-    end   = "192.168.10.100"
-  }
+  start = "192.168.10.50"
+  end   = "192.168.10.100"
+}
   allocation_pool {
-    start = "192.168.10.106"
-    end   = "192.168.10.200"
-  }
+  start = "192.168.10.106"
+  end   = "192.168.10.200"
+}
   dns_nameservers = ["1.1.1.1", "8.8.8.8"]
 }
 
@@ -50,19 +50,13 @@ resource "openstack_networking_subnet_v2" "mgmt" {
 resource "openstack_networking_network_v2" "mpi" { name = "mpi-net" }
 
 resource "openstack_networking_subnet_v2" "mpi" {
-  name        = "mpi-subnet"
-  network_id  = openstack_networking_network_v2.mpi.id
-  cidr        = "192.168.20.0/24"
-  ip_version  = 4
+  name       = "mpi-subnet"
+  network_id = openstack_networking_network_v2.mpi.id
+  cidr       = "192.168.20.0/24"
+  ip_version = 4
   enable_dhcp = true
-  allocation_pool {
-    start = "192.168.20.50"
-    end   = "192.168.20.100"
-  }
-  allocation_pool {
-    start = "192.168.20.106"
-    end   = "192.168.20.200"
-  }
+  allocation_pool { start = "192.168.20.50", end = "192.168.20.100" }
+  allocation_pool { start = "192.168.20.106", end = "192.168.20.200" }
   dns_nameservers = ["1.1.1.1", "8.8.8.8"]
 }
 

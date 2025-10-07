@@ -1,0 +1,4 @@
+resource "openstack_compute_keypair_v2" "me" {
+  name       = "indyssc-cluster-key"
+  public_key = tls_private_key.cluster.public_key_openssh
+}
