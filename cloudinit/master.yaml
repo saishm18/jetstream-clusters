@@ -1,0 +1,117 @@
+#cloud-config
+package_update: true
+packages:
+  - openmpi
+  - openmpi-devel
+  - iperf3
+  - hwloc
+  - numactl
+
+write_files:
+  - path: /etc/profile.d/openmpi.sh
+    permissions: '0644'
+    content: |
+      export PATH=/usr/lib64/openmpi/bin:$PATH
+      export LD_LIBRARY_PATH=/usr/lib64/openmpi/lib:$${LD_LIBRARY_PATH:-}
+
+  - path: /etc/hosts
+    permissions: '0644'
+    owner: root:root
+    append: true
+    content: |
+      # IndySCC cluster hostnames (mgmt + mpi)
+      192.168.10.101 master
+      192.168.20.101 master-mpi
+      192.168.10.102 worker1
+      192.168.20.102 worker1-mpi
+      192.168.10.103 worker2
+      192.168.20.103 worker2-mpi
+      192.168.10.104 worker3
+      192.168.20.104 worker3-mpi
+      192.168.10.105 worker4
+      192.168.20.105 worker4-mpi
+
+  - path: /usr/local/bin/cluster-wait
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      for h in worker1 worker2 worker3 worker4; do
+        echo "waiting for $h sshd..."
+        until timeout 3 bash -lc "echo | ssh -o BatchMode=yes -o StrictHostKeyChecking=no $h 'true'"; do
+          sleep 2
+        done
+      done
+
+  - path: /usr/local/bin/cluster-check
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      log=/var/log/cluster-verify.log
+      exec > >(tee -a "$log") 2>&1
+
+      echo "== ping (mgmt) =="
+      for h in master worker1 worker2 worker3 worker4; do ping -c2 "$h" || true; done
+      echo "== ping (mpi) =="
+      for h in master-mpi worker1-mpi worker2-mpi worker3-mpi worker4-mpi; do ping -c2 "$h" || true; done
+
+      echo "== build hello.c and run 5-rank MPI =="
+      . /etc/profile.d/openmpi.sh
+
+      mkdir -p /home/rocky
+      cat >/home/rocky/hello.c <<'EOF'
+      #include <mpi.h>
+      #include <stdio.h>
+      #include <unistd.h>
+      int main(int argc,char**argv){
+        MPI_Init(&argc,&argv);
+        int r,n; MPI_Comm_rank(MPI_COMM_WORLD,&r); MPI_Comm_size(MPI_COMM_WORLD,&n);
+        char h[128]; gethostname(h,sizeof(h));
+        printf("hello from rank %d of %d on %s\n", r, n, h);
+        MPI_Finalize(); return 0;
+      }
+      EOF
+
+      mpicc -O2 -o /home/rocky/hello /home/rocky/hello.c
+
+      cat >/home/rocky/mpi.hosts <<EOF
+      master-mpi slots=1
+      worker1-mpi slots=1
+      worker2-mpi slots=1
+      worker3-mpi slots=1
+      worker4-mpi slots=1
+      EOF
+
+      chown rocky:rocky /home/rocky/hello /home/rocky/hello.c /home/rocky/mpi.hosts
+
+      mpirun -np 5 \
+        --hostfile /home/rocky/mpi.hosts \
+        --prefix /usr/lib64/openmpi \
+        --mca btl_tcp_if_include eth2 \
+        --mca oob_tcp_if_include eth2 \
+        --mca routed direct \
+        --preload-binary \
+        /home/rocky/hello
+
+      echo "OK: cluster verified"
+
+  - path: /etc/systemd/system/cluster-verify.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Verify MPI cluster on first boot
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/bash -lc '/usr/local/bin/cluster-wait && /usr/local/bin/cluster-check'
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - [ bash, -lc, 'systemctl disable --now firewalld || true' ]
+  - [ bash, -lc, 'systemctl daemon-reload && systemctl enable --now cluster-verify.service' ]
