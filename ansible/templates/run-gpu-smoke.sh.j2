@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+. /etc/profile.d/cuda.sh >/dev/null 2>&1 || true
+
+echo "== Host =="
+hostname
+
+echo "== NVIDIA-SMI =="
+nvidia-smi
+
+echo "== NVCC =="
+if command -v nvcc >/dev/null 2>&1; then
+  nvcc --version
+else
+  echo "nvcc-not-found"
+fi
+
+echo "== CUDA smoke =="
+workdir="$(mktemp -d "${TMPDIR:-/tmp}/gpu-smoke.XXXXXX")"
+trap 'rm -rf "$workdir"' EXIT
+cat > "$workdir/gpu_hello.cu" <<'EOF'
+#include <cstdio>
+#include <cuda_runtime.h>
+int main() {
+  int count = 0;
+  cudaError_t err = cudaGetDeviceCount(&count);
+  if (err != cudaSuccess) {
+    std::printf("cudaGetDeviceCount failed: %s\n", cudaGetErrorString(err));
+    return 1;
+  }
+  std::printf("GPU count: %d\n", count);
+  for (int i = 0; i < count; ++i) {
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, i);
+    std::printf("GPU %d: %s\n", i, prop.name);
+  }
+  return 0;
+}
+EOF
+if command -v nvcc >/dev/null 2>&1; then
+  nvcc -O2 -o "$workdir/gpu_hello" "$workdir/gpu_hello.cu"
+  "$workdir/gpu_hello"
+else
+  echo "cuda-smoke-skipped-no-nvcc"
+fi
+
+echo "== PCI devices =="
+lspci | grep -i nvidia || true

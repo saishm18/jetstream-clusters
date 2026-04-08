@@ -1,0 +1,182 @@
+---
+- name: Prepare common tooling on the GPU test cluster
+  hosts: cluster
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Install common GPU cluster prerequisites
+      package:
+        name:
+          - gcc
+          - gcc-c++
+          - gcc-gfortran
+          - make
+          - git
+          - rsync
+          - python3
+          - pciutils
+          - openmpi
+          - openmpi-devel
+        state: present
+
+    - name: Ensure benchmark roots exist
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: rocky
+        group: rocky
+        mode: "0755"
+      loop:
+        - "{{ benchmark_root }}"
+        - "{{ gpu_benchmark_root }}"
+
+    - name: Ensure OpenMPI environment is available system-wide
+      copy:
+        dest: /etc/profile.d/openmpi.sh
+        mode: "0644"
+        content: |
+          export PATH={{ openmpi_prefix }}/bin:$PATH
+          export LD_LIBRARY_PATH={{ openmpi_prefix }}/lib:${LD_LIBRARY_PATH:-}
+
+    - name: Render MPI hostfile on all nodes
+      template:
+        src: ../templates/mpi-hosts.j2
+        dest: /home/rocky/mpi.hosts
+        owner: rocky
+        group: rocky
+        mode: "0644"
+
+    - name: Render MPI smoke test helper
+      template:
+        src: ../templates/run-smoke-mpi.sh.j2
+        dest: /home/rocky/run-smoke-mpi.sh
+        owner: rocky
+        group: rocky
+        mode: "0755"
+
+- name: Prepare and inspect the GPU worker
+  hosts: workers
+  become: true
+  gather_facts: false
+  serial: 1
+  tasks:
+    - name: Disable stale NVIDIA container repo shipped on the image
+      ini_file:
+        path: /etc/yum.repos.d/nvidia-docker.repo
+        section: "{{ item }}"
+        option: enabled
+        value: "0"
+        no_extra_spaces: true
+      loop:
+        - libnvidia-container
+        - libnvidia-container-experimental
+        - nvidia-container-runtime
+        - nvidia-container-runtime-experimental
+        - nvidia-docker
+      ignore_errors: true
+
+    - name: Add official CUDA Rocky/RHEL 10 network repo
+      copy:
+        dest: /etc/yum.repos.d/cuda-rhel10.repo
+        mode: "0644"
+        content: |
+          [cuda-rhel10-x86_64]
+          name=cuda-rhel10-x86_64
+          baseurl=https://developer.download.nvidia.com/compute/cuda/repos/rhel10/x86_64
+          enabled=1
+          gpgcheck=1
+          gpgkey=https://developer.download.nvidia.com/compute/cuda/repos/rhel10/x86_64/CDF6BA43.pub
+
+    - name: Import CUDA repository GPG key
+      rpm_key:
+        state: present
+        key: https://developer.download.nvidia.com/compute/cuda/repos/rhel10/x86_64/CDF6BA43.pub
+
+    - name: Check that NVIDIA driver is available
+      command: nvidia-smi
+      register: gpu_smi
+      changed_when: false
+
+    - name: Check whether nvcc is installed
+      shell: 'if command -v nvcc >/dev/null 2>&1; then nvcc --version; else echo "nvcc-not-found"; fi'
+      register: gpu_nvcc
+      changed_when: false
+
+    - name: Optionally install CUDA toolkit when enabled
+      package:
+        name:
+          - "{{ cuda_toolkit_package }}"
+          - "{{ cuda_compat_package }}"
+        state: present
+      register: gpu_cuda_packages
+      retries: 3
+      delay: 15
+      until: gpu_cuda_packages is succeeded
+      when: gpu_install_cuda_toolkit | bool
+
+    - name: Ensure CUDA environment is available system-wide
+      copy:
+        dest: /etc/profile.d/cuda.sh
+        mode: "0644"
+        content: |
+          export CUDA_HOME={{ cuda_home }}
+          export PATH={{ cuda_home }}/bin:$PATH
+          export LD_LIBRARY_PATH={{ cuda_home }}/compat:{{ cuda_home }}/lib64:${LD_LIBRARY_PATH:-}
+      when: gpu_install_cuda_toolkit | bool
+
+    - name: Re-check whether nvcc is installed after toolkit setup
+      shell: '. /etc/profile.d/cuda.sh >/dev/null 2>&1 || true; if command -v nvcc >/dev/null 2>&1; then nvcc --version; else echo "nvcc-not-found"; fi'
+      register: gpu_nvcc_after
+      changed_when: false
+
+    - name: Validate CUDA runtime can see the GPU after toolkit setup
+      shell: |
+        . /etc/profile.d/cuda.sh >/dev/null 2>&1 || true
+        cat > /tmp/gpu_hello.cu <<'EOF'
+        #include <cstdio>
+        #include <cuda_runtime.h>
+        int main() {
+          int count = 0;
+          cudaError_t err = cudaGetDeviceCount(&count);
+          if (err != cudaSuccess) {
+            std::printf("cudaGetDeviceCount failed: %s\n", cudaGetErrorString(err));
+            return 1;
+          }
+          std::printf("GPU count: %d\n", count);
+          for (int i = 0; i < count; ++i) {
+            cudaDeviceProp prop;
+            cudaGetDeviceProperties(&prop, i);
+            std::printf("GPU %d: %s\n", i, prop.name);
+          }
+          return 0;
+        }
+        EOF
+        nvcc -O2 -o /tmp/gpu_hello /tmp/gpu_hello.cu
+        /tmp/gpu_hello
+      register: gpu_cuda_smoke
+      changed_when: false
+      when: gpu_install_cuda_toolkit | bool
+
+    - name: Persist GPU inspection report
+      copy:
+        dest: /home/rocky/gpu-report.txt
+        owner: rocky
+        group: rocky
+        mode: "0644"
+        content: |
+          == nvidia-smi ==
+          {{ gpu_smi.stdout }}
+
+          == nvcc ==
+          {{ gpu_nvcc_after.stdout }}
+
+          == cuda smoke ==
+          {{ gpu_cuda_smoke.stdout | default('skipped') }}
+
+    - name: Render GPU smoke test helper
+      template:
+        src: ../templates/run-gpu-smoke.sh.j2
+        dest: /home/rocky/run-gpu-smoke.sh
+        owner: rocky
+        group: rocky
+        mode: "0755"

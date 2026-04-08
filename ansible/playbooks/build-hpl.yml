@@ -1,0 +1,88 @@
+---
+- name: Build HPL on the master
+  hosts: masters
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Ensure benchmark root exists
+      file:
+        path: "{{ benchmark_root }}"
+        state: directory
+        owner: rocky
+        group: rocky
+        mode: "0755"
+
+    - name: Download HPL source archive
+      get_url:
+        url: "{{ hpl_url }}"
+        dest: "{{ benchmark_root }}/{{ hpl_archive_name }}"
+        owner: rocky
+        group: rocky
+        mode: "0644"
+
+    - name: Unpack HPL source
+      unarchive:
+        src: "{{ benchmark_root }}/{{ hpl_archive_name }}"
+        dest: "{{ benchmark_root }}"
+        remote_src: true
+        owner: rocky
+        group: rocky
+        creates: "{{ hpl_extract_dir }}/README"
+
+    - name: Render HPL build config
+      template:
+        src: ../templates/Make.Linux_OpenMPI_OpenBLAS.j2
+        dest: "{{ hpl_extract_dir }}/Make.{{ hpl_arch }}"
+        owner: rocky
+        group: rocky
+        mode: "0644"
+
+    - name: Build HPL binary
+      command: "make arch={{ hpl_arch }}"
+      args:
+        chdir: "{{ hpl_extract_dir }}"
+        creates: "{{ hpl_extract_dir }}/bin/{{ hpl_arch }}/xhpl"
+      become_user: rocky
+
+    - name: Render HPL input file
+      template:
+        src: ../templates/HPL.dat.j2
+        dest: "{{ hpl_extract_dir }}/bin/{{ hpl_arch }}/HPL.dat"
+        owner: rocky
+        group: rocky
+        mode: "0644"
+
+- name: Distribute HPL runtime from the master
+  hosts: masters
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Copy built HPL tree to workers
+      command: >-
+        rsync -a
+        -e "ssh -i /home/rocky/.ssh/id_ed25519 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        {{ hpl_extract_dir }}/
+        rocky@{{ item }}:{{ hpl_extract_dir }}/
+      become_user: rocky
+      loop: "{{ groups['workers'] }}"
+
+- name: Render HPL run helpers on the master
+  hosts: masters
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Render worker-only HPL hostfile
+      template:
+        src: ../templates/hpl-hosts.j2
+        dest: /home/rocky/hpl.hosts
+        owner: rocky
+        group: rocky
+        mode: "0644"
+
+    - name: Render HPL run script
+      template:
+        src: ../templates/run-hpl.sh.j2
+        dest: /home/rocky/run-hpl.sh
+        owner: rocky
+        group: rocky
+        mode: "0755"

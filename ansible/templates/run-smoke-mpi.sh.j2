@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source /etc/profile.d/openmpi.sh
+
+cat > /home/rocky/hello.c <<'EOF'
+#include <mpi.h>
+#include <stdio.h>
+#include <unistd.h>
+
+int main(int argc, char **argv) {
+  int rank, size;
+  char host[128];
+
+  MPI_Init(&argc, &argv);
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  MPI_Comm_size(MPI_COMM_WORLD, &size);
+  gethostname(host, sizeof(host));
+  printf("hello from rank %d of %d on %s\n", rank, size, host);
+  MPI_Finalize();
+  return 0;
+}
+EOF
+
+{{ openmpi_prefix }}/bin/mpicc -O2 -o /home/rocky/hello /home/rocky/hello.c
+{{ openmpi_prefix }}/bin/mpirun -np {{ mpi_smoke_ranks }} --hostfile /home/rocky/mpi.hosts /home/rocky/hello

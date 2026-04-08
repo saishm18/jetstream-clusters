@@ -1,0 +1,34 @@
+---
+benchmark_root: /opt/benchmarks
+openmpi_prefix: /usr/lib64/openmpi
+openmpi_include_dir: /usr/include/openmpi-x86_64
+mpi_smoke_ranks: 9
+hpl_source_dir: "{{ benchmark_root }}/hpl"
+hpl_tarball_local: ""
+hpl_version: "2.3"
+hpl_url: "https://www.netlib.org/benchmark/hpl/hpl-{{ hpl_version }}.tar.gz"
+hpl_archive_name: "hpl-{{ hpl_version }}.tar.gz"
+hpl_extract_dir: "{{ benchmark_root }}/hpl-{{ hpl_version }}"
+hpl_arch: "Linux_OpenMPI_OpenBLAS"
+hpl_problem_size: 24000
+hpl_block_size: 128
+hpl_process_rows: 2
+hpl_process_cols: 4
+hpl_num_ranks: 8
+gpu_benchmark_root: /opt/gpu-benchmarks
+gpu_install_cuda_toolkit: true
+gpu_worker_count: 8
+cuda_toolkit_package: cuda-toolkit-13-2
+cuda_compat_package: cuda-compat-13-2
+cuda_home: /usr/local/cuda-13.2
+nccl_tests_repo: "https://github.com/NVIDIA/nccl-tests.git"
+nccl_tests_version: "master"
+nccl_tests_dir: "{{ gpu_benchmark_root }}/nccl-tests"
+nccl_one_gpu_per_node: true
+nccl_num_nodes: 8
+nccl_gpus_per_node: 1
+nccl_total_ranks: "{{ nccl_num_nodes * nccl_gpus_per_node }}"
+nccl_test_binary: all_reduce_perf
+nccl_min_bytes: 8
+nccl_max_bytes: 1G
+nccl_step_factor: 2

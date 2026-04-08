@@ -1,0 +1,63 @@
+---
+- name: Build NCCL tests on GPU workers
+  hosts: workers
+  become: true
+  gather_facts: false
+  serial: 1
+  tasks:
+    - name: Install NCCL build prerequisites
+      package:
+        name:
+          - git
+          - make
+          - gcc
+          - gcc-c++
+          - libnccl
+          - libnccl-devel
+        state: present
+
+    - name: Ensure GPU benchmark root exists
+      file:
+        path: "{{ gpu_benchmark_root }}"
+        state: directory
+        owner: rocky
+        group: rocky
+        mode: "0755"
+
+    - name: Clone NCCL tests repository
+      git:
+        repo: "{{ nccl_tests_repo }}"
+        dest: "{{ nccl_tests_dir }}"
+        version: "{{ nccl_tests_version }}"
+        update: true
+      become_user: rocky
+
+    - name: Build NCCL tests
+      shell: |
+        . /etc/profile.d/cuda.sh
+        make -j"$(nproc)" MPI=1 MPI_HOME={{ openmpi_prefix }} CUDA_HOME={{ cuda_home }} NCCL_HOME=/usr NVCUFLAGS="-I{{ openmpi_include_dir }}"
+      args:
+        chdir: "{{ nccl_tests_dir }}"
+        creates: "{{ nccl_tests_dir }}/build/{{ nccl_test_binary }}"
+      become_user: rocky
+
+- name: Render NCCL run helpers on the master
+  hosts: masters
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Render NCCL hostfile
+      template:
+        src: ../templates/nccl-hosts.j2
+        dest: /home/rocky/nccl.hosts
+        owner: rocky
+        group: rocky
+        mode: "0644"
+
+    - name: Render NCCL run script
+      template:
+        src: ../templates/run-nccl-tests.sh.j2
+        dest: /home/rocky/run-nccl-tests.sh
+        owner: rocky
+        group: rocky
+        mode: "0755"

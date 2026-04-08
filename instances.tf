@@ -1,14 +1,6 @@
-# Use your local SSH public key so cloud-init injects it
-
-# ---------- Helper locals for fixed IPs ----------
 locals {
   # worker indexes 1..var.worker_count
   workers = [for i in range(var.worker_count) : i + 1]
-  # IP helpers for mgmt/mpi
-  ip = {
-    master = { mgmt = "192.168.10.101", mpi = "192.168.20.101" }
-    worker = { mgmt_base = "192.168.10.10", mpi_base = "192.168.20.10" } # we'll add index later (.2 + idx*?)
-  }
 }
 
 # Master ports (fixed mgmt/mpi, DHCP on access)
@@ -50,7 +42,7 @@ resource "openstack_networking_port_v2" "worker_mgmt" {
   security_group_ids = [openstack_networking_secgroup_v2.cluster_sg.id]
   fixed_ip {
     subnet_id  = openstack_networking_subnet_v2.mgmt.id
-    ip_address = format("192.168.10.1%02d", each.key + 1) # .102-.105 for 4 workers
+    ip_address = local.host_ip_map["worker${each.key}"].mgmt
   }
 }
 
@@ -61,7 +53,7 @@ resource "openstack_networking_port_v2" "worker_mpi" {
   security_group_ids = [openstack_networking_secgroup_v2.cluster_sg.id]
   fixed_ip {
     subnet_id  = openstack_networking_subnet_v2.mpi.id
-    ip_address = format("192.168.20.1%02d", each.key + 1) # .102-.105
+    ip_address = local.host_ip_map["worker${each.key}"].mpi
   }
 }
 
@@ -103,8 +95,9 @@ resource "openstack_compute_instance_v2" "worker" {
   network { port = openstack_networking_port_v2.worker_mgmt[each.key].id }
   network { port = openstack_networking_port_v2.worker_mpi[each.key].id }
 
-  user_data = local.worker_user_data
+  user_data = local.worker_user_data_map[each.key]
 }
+
 
 # ---------- Floating IPs ----------
 resource "openstack_networking_floatingip_v2" "fip_master" {

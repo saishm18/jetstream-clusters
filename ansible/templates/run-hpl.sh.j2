@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source /etc/profile.d/openmpi.sh
+
+HPL_DIR="{{ hpl_extract_dir }}/bin/{{ hpl_arch }}"
+cd "$HPL_DIR"
+
+echo "Running HPL with {{ hpl_num_ranks }} MPI ranks across {{ gpu_worker_count if gpu_worker_count is defined else hpl_num_ranks }} worker node(s)."
+echo "Problem size N={{ hpl_problem_size }}, NB={{ hpl_block_size }}, P={{ hpl_process_rows }}, Q={{ hpl_process_cols }}"
+
+mpirun \
+  --mca btl_tcp_if_include enp3s0 \
+  --mca oob_tcp_if_include enp3s0 \
+  -np {{ hpl_num_ranks }} \
+  --hostfile /home/rocky/hpl.hosts \
+  ./xhpl

@@ -34,13 +34,13 @@ resource "openstack_networking_subnet_v2" "mgmt" {
   cidr        = "192.168.10.0/24"
   ip_version  = 4
   enable_dhcp = true
-  # Avoid DHCP handing out .101-.105 by skipping them in pools
+  # Reserve .101-.124 for the master plus future statically addressed workers.
   allocation_pool {
     start = "192.168.10.50"
     end   = "192.168.10.100"
   }
   allocation_pool {
-    start = "192.168.10.106"
+    start = "192.168.10.125"
     end   = "192.168.10.200"
   }
   dns_nameservers = ["1.1.1.1", "8.8.8.8"]
@@ -55,12 +55,13 @@ resource "openstack_networking_subnet_v2" "mpi" {
   cidr        = "192.168.20.0/24"
   ip_version  = 4
   enable_dhcp = true
+  # Reserve .101-.124 for the master plus future statically addressed workers.
   allocation_pool {
     start = "192.168.20.50"
     end   = "192.168.20.100"
   }
   allocation_pool {
-    start = "192.168.20.106"
+    start = "192.168.20.125"
     end   = "192.168.20.200"
   }
   dns_nameservers = ["1.1.1.1", "8.8.8.8"]

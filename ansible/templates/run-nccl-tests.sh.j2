@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source /etc/profile.d/openmpi.sh
+export CUDA_HOME="{{ cuda_home }}"
+export PATH="{{ cuda_home }}/bin:$PATH"
+export LD_LIBRARY_PATH="{{ cuda_home }}/compat:{{ cuda_home }}/lib64:${LD_LIBRARY_PATH:-}"
+
+export NCCL_DEBUG=WARN
+export NCCL_SOCKET_IFNAME=enp3s0
+export OMPI_MCA_btl_tcp_if_include=enp3s0
+export OMPI_MCA_oob_tcp_if_include=enp3s0
+{% if nccl_one_gpu_per_node %}
+export CUDA_VISIBLE_DEVICES=0
+{% endif %}
+
+NCCL_BIN="{{ nccl_tests_dir }}/build/{{ nccl_test_binary }}"
+
+echo "Running NCCL {{ nccl_test_binary }} on {{ nccl_num_nodes }} worker nodes with {{ nccl_gpus_per_node }} GPU per node"
+echo "Total ranks: {{ nccl_total_ranks }}"
+
+mpirun \
+  -np {{ nccl_total_ranks }} \
+  --hostfile /home/rocky/nccl.hosts \
+  -x NCCL_DEBUG \
+  -x NCCL_SOCKET_IFNAME \
+  -x OMPI_MCA_btl_tcp_if_include \
+  -x OMPI_MCA_oob_tcp_if_include \
+  -x CUDA_HOME \
+  -x LD_LIBRARY_PATH \
+  -x CUDA_VISIBLE_DEVICES \
+  "$NCCL_BIN" -b {{ nccl_min_bytes }} -e {{ nccl_max_bytes }} -f {{ nccl_step_factor }} -g {{ nccl_gpus_per_node }}

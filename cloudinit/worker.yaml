@@ -1,22 +1,31 @@
 #cloud-config
+hostname: ${node_name}
+fqdn: ${node_name}
+manage_etc_hosts: false
+
 package_update: true
 packages:
-  - epel-release
   - openmpi
   - openmpi-devel
-  - munge
-  - munge-libs
-  - slurm
-  - slurm-slurmd
   - iperf3
-  - nc
+  - hwloc
+  - numactl
+  - python3
 
 users:
   - name: rocky
+    shell: /bin/bash
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
     ssh_authorized_keys:
       - ${cluster_pub}
 
 write_files:
+  - path: /etc/profile.d/openmpi.sh
+    permissions: '0644'
+    content: |
+      export PATH=/usr/lib64/openmpi/bin:$PATH
+      export LD_LIBRARY_PATH=/usr/lib64/openmpi/lib:$${LD_LIBRARY_PATH:-}
+
   - path: /etc/hosts
     permissions: '0644'
     content: |
@@ -28,7 +37,4 @@ runcmd:
   - [ bash, -lc, "sudo sed -i 's/^#\\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config" ]
   - [ bash, -lc, "echo 'AddressFamily inet' | sudo tee -a /etc/ssh/sshd_config" ]
   - [ bash, -lc, "sudo systemctl reload sshd || sudo systemctl reload ssh" ]
-  - [ bash, -lc, "id -u munge >/dev/null 2>&1 || sudo useradd -r -s /sbin/nologin munge" ]
-  - [ bash, -lc, "id -u slurm >/dev/null 2>&1 || sudo useradd -r -s /sbin/nologin slurm" ]
-  - [ bash, -lc, "echo 'export PATH=/usr/lib64/openmpi/bin:$PATH' | sudo tee /etc/profile.d/mpi.sh" ]
-  - [ bash, -lc, "echo 'export LD_LIBRARY_PATH=/usr/lib64/openmpi/lib:$LD_LIBRARY_PATH' | sudo tee -a /etc/profile.d/mpi.sh" ]
+  - [ bash, -lc, "sudo systemctl disable --now firewalld || true" ]

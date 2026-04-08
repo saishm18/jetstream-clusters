@@ -1,0 +1,72 @@
+---
+- name: Prepare Jetstream2 cluster for MPI and HPL
+  hosts: cluster
+  become: true
+  tasks:
+    - name: Install HPL prerequisites
+      package:
+        name:
+          - gcc
+          - gcc-c++
+          - gcc-gfortran
+          - make
+          - git
+          - rsync
+          - openmpi
+          - openmpi-devel
+          - openblas
+          - openblas-devel
+          - hwloc
+          - numactl
+          - python3
+        state: present
+
+    - name: Ensure benchmark root exists
+      file:
+        path: "{{ benchmark_root }}"
+        state: directory
+        owner: rocky
+        group: rocky
+        mode: "0755"
+
+    - name: Ensure OpenMPI environment is available system-wide
+      copy:
+        dest: /etc/profile.d/openmpi.sh
+        mode: "0644"
+        content: |
+          export PATH={{ openmpi_prefix }}/bin:$PATH
+          export LD_LIBRARY_PATH={{ openmpi_prefix }}/lib:${LD_LIBRARY_PATH:-}
+
+    - name: Render MPI hostfile on all nodes
+      template:
+        src: ../templates/mpi-hosts.j2
+        dest: /home/rocky/mpi.hosts
+        owner: rocky
+        group: rocky
+        mode: "0644"
+
+    - name: Render MPI smoke test helper
+      template:
+        src: ../templates/run-smoke-mpi.sh.j2
+        dest: /home/rocky/run-smoke-mpi.sh
+        owner: rocky
+        group: rocky
+        mode: "0755"
+
+    - name: Copy HPL source archive when provided
+      copy:
+        src: "{{ hpl_tarball_local }}"
+        dest: "{{ benchmark_root }}/"
+        owner: rocky
+        group: rocky
+        mode: "0644"
+      when: hpl_tarball_local | length > 0
+
+    - name: Unpack HPL source archive when provided
+      unarchive:
+        src: "{{ benchmark_root }}/{{ hpl_tarball_local | basename }}"
+        dest: "{{ benchmark_root }}"
+        remote_src: true
+        owner: rocky
+        group: rocky
+      when: hpl_tarball_local | length > 0

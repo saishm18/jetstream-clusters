@@ -1,0 +1,41 @@
+ARCH         = {{ hpl_arch }}
+SHELL        = /bin/sh
+CD           = cd
+
+TOPdir       = {{ hpl_extract_dir }}
+INCdir       = $(TOPdir)/include
+BINdir       = $(TOPdir)/bin/$(ARCH)
+LIBdir       = $(TOPdir)/lib/$(ARCH)
+
+MKDIR        = mkdir -p
+CP           = cp
+LN_S         = ln -fs
+RM           = /bin/rm -f
+TOUCH        = touch
+
+HPLlib       = $(LIBdir)/libhpl.a
+
+MPdir        = {{ openmpi_prefix }}
+MPinc        = -I$(MPdir)/include
+MPlib        = -L$(MPdir)/lib -lmpi
+
+LAdir        = /usr/lib64
+LAinc        =
+LAlib        = -L$(LAdir) -lopenblas
+
+F2CDEFS      = -DAdd_ -DF77_INTEGER=int -DStringSunStyle
+HPL_DEFS     = $(F2CDEFS) -DHPL_CALL_CBLAS -DHPL_DETAILED_TIMING
+
+HPL_INCLUDES = -I$(INCdir) -I$(INCdir)/$(ARCH) $(MPinc)
+HPL_LIBS     = $(HPLlib) $(LAlib) $(MPlib) -lm
+
+CC           = $(MPdir)/bin/mpicc
+CCNOOPT      = $(HPL_DEFS) $(HPL_INCLUDES)
+CCFLAGS      = $(HPL_DEFS) $(HPL_INCLUDES) -O3 -funroll-loops -fomit-frame-pointer
+
+LINKER       = $(CC)
+LINKFLAGS    = $(CCFLAGS)
+
+ARCHIVER     = ar
+ARFLAGS      = r
+RANLIB       = ranlib

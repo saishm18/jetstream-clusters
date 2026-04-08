@@ -1,0 +1,128 @@
+---
+- name: Build CUDA microbenchmarks on GPU workers
+  hosts: workers
+  become: true
+  gather_facts: false
+  serial: 1
+  tasks:
+    - name: Ensure GPU benchmark directories exist
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: rocky
+        group: rocky
+        mode: "0755"
+      loop:
+        - "{{ gpu_benchmark_root }}"
+        - "{{ gpu_benchmark_root }}/cuda-microbench"
+
+    - name: Render CUDA benchmark source
+      copy:
+        dest: "{{ gpu_benchmark_root }}/cuda-microbench/cuda_microbench.cu"
+        owner: rocky
+        group: rocky
+        mode: "0644"
+        content: |
+          #include <cuda_runtime.h>
+          #include <chrono>
+          #include <cmath>
+          #include <cstdio>
+          #include <vector>
+
+          __global__ void saxpy(int n, float a, const float* x, float* y) {
+            int i = blockIdx.x * blockDim.x + threadIdx.x;
+            if (i < n) y[i] = a * x[i] + y[i];
+          }
+
+          static void check(cudaError_t err, const char* msg) {
+            if (err != cudaSuccess) {
+              std::fprintf(stderr, "%s: %s\n", msg, cudaGetErrorString(err));
+              std::exit(1);
+            }
+          }
+
+          int main() {
+            int count = 0;
+            check(cudaGetDeviceCount(&count), "cudaGetDeviceCount");
+            std::printf("GPU count: %d\n", count);
+            if (count < 1) return 1;
+
+            check(cudaSetDevice(0), "cudaSetDevice");
+
+            cudaDeviceProp prop{};
+            check(cudaGetDeviceProperties(&prop, 0), "cudaGetDeviceProperties");
+            std::printf("GPU name: %s\n", prop.name);
+            std::printf("SM count: %d\n", prop.multiProcessorCount);
+            std::printf("Global memory bytes: %zu\n", static_cast<size_t>(prop.totalGlobalMem));
+
+            const size_t n = 1u << 26;
+            const size_t bytes = n * sizeof(float);
+
+            float *dx = nullptr, *dy = nullptr;
+            check(cudaMalloc(&dx, bytes), "cudaMalloc dx");
+            check(cudaMalloc(&dy, bytes), "cudaMalloc dy");
+
+            std::vector<float> hx(n, 1.0f), hy(n, 2.0f);
+
+            auto h2d_start = std::chrono::high_resolution_clock::now();
+            check(cudaMemcpy(dx, hx.data(), bytes, cudaMemcpyHostToDevice), "cudaMemcpy H2D x");
+            check(cudaMemcpy(dy, hy.data(), bytes, cudaMemcpyHostToDevice), "cudaMemcpy H2D y");
+            check(cudaDeviceSynchronize(), "cudaDeviceSynchronize after H2D");
+            auto h2d_end = std::chrono::high_resolution_clock::now();
+
+            const int threads = 256;
+            const int blocks = static_cast<int>((n + threads - 1) / threads);
+            cudaEvent_t start, stop;
+            check(cudaEventCreate(&start), "cudaEventCreate start");
+            check(cudaEventCreate(&stop), "cudaEventCreate stop");
+
+            check(cudaEventRecord(start), "cudaEventRecord start");
+            for (int i = 0; i < 200; ++i) saxpy<<<blocks, threads>>>(static_cast<int>(n), 2.5f, dx, dy);
+            check(cudaEventRecord(stop), "cudaEventRecord stop");
+            check(cudaEventSynchronize(stop), "cudaEventSynchronize stop");
+
+            float ms = 0.0f;
+            check(cudaEventElapsedTime(&ms, start, stop), "cudaEventElapsedTime");
+            check(cudaGetLastError(), "saxpy launch");
+
+            auto d2h_start = std::chrono::high_resolution_clock::now();
+            check(cudaMemcpy(hy.data(), dy, bytes, cudaMemcpyDeviceToHost), "cudaMemcpy D2H y");
+            check(cudaDeviceSynchronize(), "cudaDeviceSynchronize after D2H");
+            auto d2h_end = std::chrono::high_resolution_clock::now();
+
+            double h2d_s = std::chrono::duration<double>(h2d_end - h2d_start).count();
+            double d2h_s = std::chrono::duration<double>(d2h_end - d2h_start).count();
+            double h2d_gbps = (2.0 * static_cast<double>(bytes) / 1.0e9) / h2d_s;
+            double d2h_gbps = (static_cast<double>(bytes) / 1.0e9) / d2h_s;
+            double ops = 2.0 * static_cast<double>(n) * 200.0;
+            double gflops = ops / (static_cast<double>(ms) / 1.0e3) / 1.0e9;
+
+            std::printf("HostToDevice_GBps: %.2f\n", h2d_gbps);
+            std::printf("DeviceToHost_GBps: %.2f\n", d2h_gbps);
+            std::printf("SAXPY_GFLOPS: %.2f\n", gflops);
+
+            check(cudaFree(dx), "cudaFree dx");
+            check(cudaFree(dy), "cudaFree dy");
+            return 0;
+          }
+
+    - name: Build CUDA benchmark binary
+      shell: |
+        . /etc/profile.d/cuda.sh
+        nvcc -O3 -o {{ gpu_benchmark_root }}/cuda-microbench/cuda_microbench {{ gpu_benchmark_root }}/cuda-microbench/cuda_microbench.cu
+      args:
+        creates: "{{ gpu_benchmark_root }}/cuda-microbench/cuda_microbench"
+      become_user: rocky
+
+- name: Render CUDA benchmark run helpers on the master
+  hosts: masters
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Render CUDA benchmark runner
+      template:
+        src: ../templates/run-cuda-bench.sh.j2
+        dest: /home/rocky/run-cuda-bench.sh
+        owner: rocky
+        group: rocky
+        mode: "0755"

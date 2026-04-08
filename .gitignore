@@ -2,7 +2,25 @@
 .terraform/
 *.tfstate
 *.tfstate.*
+*.tfplan
 crash.log
 terraform.tfvars
 # Credentials / env files
 .env.openstack
+.env.terraform
+
+# SSH keys / local cluster access
+cluster.key
+cluster.pub
+nova.pub
+
+# Ansible local inventory
+ansible/inventory.ini
+
+# macOS / editor
+.DS_Store
+.idea/
+
+# Historical backups
+*.bak
+*.pre-auto

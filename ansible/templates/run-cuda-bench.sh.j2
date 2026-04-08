@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mkdir -p /home/rocky/results
+
+for h in {% for host in groups['workers'] %}{{ host }} {% endfor %}; do
+  echo "== $h =="
+  ssh "$h" 'source /etc/profile.d/cuda.sh && /opt/gpu-benchmarks/cuda-microbench/cuda_microbench' | tee "/home/rocky/results/${h}-cuda-microbench.txt"
+done
